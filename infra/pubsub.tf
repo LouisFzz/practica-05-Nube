@@ -50,6 +50,12 @@ resource "google_cloud_run_v2_service" "cocina" {
         name  = "BASE_DATOS"
         value = google_firestore_database.cafeteria.name
       }
+
+      # Falla a propósito después de terminar el pedido y antes de confirmar.
+      env {
+        name  = "PROBABILIDAD_FALLO"
+        value = "0.5"
+      }
     }
   }
 

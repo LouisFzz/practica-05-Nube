@@ -37,7 +37,7 @@ resource "google_cloud_run_v2_service" "cocina" {
     service_account = google_service_account.cocina.email
 
     scaling {
-      max_instance_count = 3
+      max_instance_count = var.max_instancias_cocina
     }
 
     # Tantas peticiones a la vez como hilos tiene gunicorn en la cocina.
@@ -49,6 +49,11 @@ resource "google_cloud_run_v2_service" "cocina" {
       env {
         name  = "BASE_DATOS"
         value = google_firestore_database.cafeteria.name
+      }
+
+      env {
+        name  = "PROBABILIDAD_FALLO"
+        value = var.probabilidad_fallo
       }
     }
   }
@@ -108,6 +113,14 @@ resource "google_pubsub_subscription" "cocina" {
     maximum_backoff = "60s"
   }
 
+  # Tras 10 entregas fallidas el mensaje se va al tema de muertos. Con la
+  # espera entre reintentos, 10 intentos le dan a un pedido varios minutos para
+  # superar un problema pasajero antes de rendirse.
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.muertos.id
+    max_delivery_attempts = 10
+  }
+
   push_config {
     push_endpoint = google_cloud_run_v2_service.cocina.uri
 
@@ -120,5 +133,34 @@ resource "google_pubsub_subscription" "cocina" {
   depends_on = [
     google_cloud_run_v2_service_iam_member.invocador_cocina,
     google_service_account_iam_member.pubsub_firma_tokens,
+    google_pubsub_topic_iam_member.pubsub_publica_muertos,
   ]
+}
+
+# ---------- Mensajes muertos ----------
+
+resource "google_pubsub_topic" "muertos" {
+  name = "${var.prefijo}-pedidos-muertos"
+
+  depends_on = [google_project_service.apis]
+}
+
+# Sin una suscripción, el tema descarta lo que le llega y el mensaje muerto se pierde.
+resource "google_pubsub_subscription" "muertos" {
+  name  = "${var.prefijo}-muertos"
+  topic = google_pubsub_topic.muertos.id
+}
+
+# El agente de Pub/Sub es quien mueve el mensaje: lo publica en el tema de muertos...
+resource "google_pubsub_topic_iam_member" "pubsub_publica_muertos" {
+  topic  = google_pubsub_topic.muertos.name
+  role   = "roles/pubsub.publisher"
+  member = local.agente_pubsub
+}
+
+# ...y lo confirma en la suscripción de la cocina para que deje de reintentarse.
+resource "google_pubsub_subscription_iam_member" "pubsub_confirma_cocina" {
+  subscription = google_pubsub_subscription.cocina.name
+  role         = "roles/pubsub.subscriber"
+  member       = local.agente_pubsub
 }

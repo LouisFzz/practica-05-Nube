@@ -36,3 +36,17 @@ variable "imagen_cocina" {
   description = "Imagen de la cocina en Artifact Registry, con su etiqueta"
   type        = string
 }
+
+# Las dos variables siguientes existen para las pruebas del reto: se cambian con
+# -var en el apply, sin editar el código.
+variable "probabilidad_fallo" {
+  description = "Probabilidad de que la cocina responda 500 después de terminar el pedido"
+  type        = string
+  default     = "0"
+}
+
+variable "max_instancias_cocina" {
+  description = "Máximo de instancias de la cocina en Cloud Run"
+  type        = number
+  default     = 3
+}

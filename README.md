@@ -279,7 +279,7 @@ Usamos otra vez el prefijo `beyluan`, el mismo de la práctica 6. Antes de aplic
 
 ![Contributors del repositorio](evidencias/evidencia-0a-colaboradores.png)
 
-*0a: página Contributors del repositorio con LouisFzz, Beymarjefreyve y angelvesga.*
+*0a: página Contributors del repositorio al terminar la práctica: LouisFzz con 14 commits, Beymarjefreyve con 7 y angelvesga con 6.*
 
 ![terraform.tfvars, git status y gcloud config list](evidencias/evidencia-0b-gcloud-config.png)
 

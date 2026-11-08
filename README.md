@@ -191,7 +191,7 @@ El plato misterioso falla siempre, y sin un tema de mensajes muertos Pub/Sub lo 
 
 | Nombre | Código | Usuario de GitHub |
 |---|---|---|
-| | | |
+| Luisangel Ferizzola | 1152409 | LouisFzz |
 
 ## URL de la cafetería
 

@@ -12,6 +12,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 BACKEND = sys.argv[1].rstrip("/")
@@ -22,8 +23,19 @@ TERMINADOS = ("listo", "rechazado")
 def llamar(ruta, datos=None):
     cuerpo = json.dumps(datos).encode() if datos is not None else None
     peticion = Request(BACKEND + ruta, data=cuerpo, headers={"Content-Type": "application/json"})
-    with urlopen(peticion, timeout=60) as respuesta:
-        return json.load(respuesta)
+    # Con muchas conexiones a la vez, el DNS de Cloud Shell falla de vez en
+    # cuando. Esos errores pasan antes de enviar la petición, así que repetirla
+    # no duplica ningún pedido. Un error HTTP sí es una respuesta y no se repite.
+    for intento in range(5):
+        try:
+            with urlopen(peticion, timeout=60) as respuesta:
+                return json.load(respuesta)
+        except HTTPError:
+            raise
+        except URLError:
+            if intento == 4:
+                raise
+            time.sleep(1 + intento)
 
 
 def pedir(i):

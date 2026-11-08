@@ -605,8 +605,56 @@ Esperamos unos minutos para que Firestore liberara el nombre `beyluan-cafeteria`
 
 ## Decisiones del reto
 
-<!-- Qué cambiaste, por qué y cómo comprobaste que funciona. -->
+### 1. Cómo sabe la cocina que un pedido ya se preparó
+
+La cocina consulta el campo `estado` del documento del pedido en Firestore. Si ya está en `listo` o `rechazado`, el pedido se terminó y no hay nada que hacer. No agregamos otra colección para llevar la cuenta de mensajes procesados: el pedido ya guarda ese dato, y su id es el mismo en todas las entregas de un mismo mensaje.
+
+En `cocina/main.py` el trabajo quedó en dos transacciones:
+
+- `marcar_preparando` lee el pedido y lo pasa a `preparando` solo si no está terminado. Si ya está terminado, `recibir()` responde `204` de una vez, sin esperar los 6 segundos y sin tocar el inventario.
+- `terminar` lee el estado del pedido, lee las existencias y descuenta, todo dentro de la misma transacción. Si el pedido ya estaba terminado devuelve `repetido` y no escribe nada. Antes, la cocina descontaba con `firestore.Increment` en un lote aparte de la revisión; ahora el descuento sale de las existencias leídas en la transacción.
+
+La solución aguanta dos entregas simultáneas del mismo pedido en dos instancias porque Firestore no deja que dos transacciones terminen sobre los mismos documentos con lecturas viejas. Si las dos leen el pedido en `preparando`, solo una puede confirmar; la otra se repite, vuelve a leer, encuentra el pedido en `listo` y devuelve `repetido` sin descontar. Subimos los reintentos de la transacción de 5 a 15 (`max_attempts=15`) porque en una ráfaga muchos pedidos compiten por el mismo documento del tinto.
+
+No logramos provocar a mano dos entregas del mismo pedido en el mismo instante, pero el mismo mecanismo quedó probado de dos formas. Con la falla al 0,5, diez pedidos recibieron 15 entregas y el tinto bajó exactamente 10. En las ocho corridas de medición, hasta 24 pedidos a la vez peleaban por el documento del tinto y siempre quedaron 20 listos con 20 tintos; con la cocina de la plantilla habían quedado 25 y el tinto en -5.
+
+### 2. Cuántos intentos antes de rendirse
+
+Elegimos 10 intentos (`max_delivery_attempts = 10`); Pub/Sub admite desde 5. Con la política de reintentos de 10 a 60 segundos, medimos que los 10 intentos del plato misterioso tardaron 4 minutos y 35 segundos. Con 5 intentos, Pub/Sub se habría rendido a los 77 segundos, que fue el tiempo entre el primer intento y el quinto.
+
+Un problema pasajero que vimos en esta práctica fue la propagación de permisos nuevos, que tarda uno o dos minutos; también están los arranques en frío de la cocina y los choques de transacciones en una ráfaga. Con 77 segundos un pedido podía terminar en muertos solo por un permiso que todavía no había hecho efecto, y con 4 minutos y medio tiene margen para recuperarse. Si el problema se arregla antes del intento 10, el pedido se prepara normalmente, y como la cocina es idempotente, los intentos anteriores no descuentan de más. Si no se arregla, el mensaje va a `beyluan-pedidos-muertos` y el pedido se queda en `preparando` en la pantalla. El id queda guardado en `beyluan-muertos` hasta 7 días, y cuando la causa esté resuelta se puede volver a publicar en `beyluan-pedidos`.
+
+### 3. Los permisos de los mensajes muertos
+
+Quien mueve un mensaje muerto no es la cocina sino el agente de Pub/Sub, `service-421977311923@gcp-sa-pubsub.iam.gserviceaccount.com`. Por eso los dos permisos son para él y cada uno se da sobre un recurso concreto:
+
+- `roles/pubsub.publisher` sobre el tema `beyluan-pedidos-muertos`, para publicar en él el mensaje que se rindió. Sin este permiso, el agente no podría reenviar el mensaje y este seguiría reintentándose en la suscripción de la cocina.
+- `roles/pubsub.subscriber` sobre la suscripción `beyluan-cocina`, para confirmar el mensaje en la suscripción original después de pasarlo al tema de muertos. Sin este permiso, el mensaje no saldría de la suscripción de la cocina.
+
+Si faltara la suscripción `beyluan-muertos`, el mensaje muerto se perdería. Es lo mismo que pasó en la fase 2: un tema no guarda mensajes, solo reparte copias a sus suscripciones, y si no tiene ninguna, el mensaje se descarta. Con la suscripción, el plato misterioso quedó guardado y lo pudimos leer con `gcloud pubsub subscriptions pull beyluan-muertos`.
+
+### 4. Cómo medimos
+
+Usamos el script `pruebas/medir.py`, que corrimos desde Cloud Shell con:
+
+```bash
+python3 pruebas/medir.py "$(cd infra && terraform output -raw url_backend)" 60
+```
+
+El script repone el inventario con `POST /inventario/reiniciar`, lanza los 60 pedidos de un tinto con 20 hilos y consulta cada 3 segundos el estado de todos hasta que ninguno quede pendiente. El tiempo lo calcula con las marcas `creado` y `actualizado` que guarda Firestore en cada pedido, no con la hora de Cloud Shell, para que la consulta cada 3 segundos no afecte el resultado. Para cambiar el máximo de instancias sin editar el código agregamos la variable `max_instancias_cocina` y aplicamos con `-var max_instancias_cocina=1`. Hicimos 5 corridas con 3 instancias y 3 con 1; los resultados están en la tabla de la fase 6.
+
+Con 1 instancia, el tiempo lo limitó la cocina: prepara 8 pedidos a la vez y cada uno tarda unos 6,2 segundos, así que 60 pedidos son 8 tandas, unos 50 segundos, y medimos 49. Con 3 instancias caben 24 pedidos a la vez: son 3 tandas, unos 19 segundos, más los 5 segundos que tarda en llegar la ráfaga, y medimos entre 25 y 27. Ahí pesó también la llegada de los pedidos: en las corridas donde la ráfaga tardó 16 segundos en llegar, el tiempo total fue casi igual, porque la cocina iba preparando a medida que llegaban. La primera corrida de cada serie fue la más lenta por los arranques en frío: del backend en la serie de 3 instancias (26 segundos para recibir los pedidos) y de la revisión nueva de la cocina en la serie de 1 instancia (63,6 segundos).
 
 ## Preguntas
 
-<!-- Las respuestas a las preguntas de la guía. -->
+### ¿Por qué el pedido de la fase 2 nunca se preparó, aunque después crearon la suscripción?
+
+Porque un tema de Pub/Sub no guarda mensajes: le entrega una copia a cada suscripción que existe en el momento de publicar. El pedido `ElOfnPBx9FFsFDRgyYYJ` se publicó en `beyluan-pedidos` cuando el tema todavía no tenía suscripciones, así que el mensaje se descartó en ese momento. La suscripción `beyluan-cocina` que creamos en la fase 3 solo recibe los mensajes publicados después de existir. El backend publica una sola vez, dentro de `POST /pedidos`, y nada en el sistema vuelve a publicar los pedidos que se quedan en `recibido`. Por eso ese pedido siguió en `recibido` mientras la cocina preparaba todos los demás. Para prepararlo habría que publicar otra vez su id a mano en el tema.
+
+### Si quitan el run.invoker de la cuenta invocadora, ¿qué deja de funcionar, cuánto tarda en notarse, qué ve el cliente en el teléfono y dónde encontrarían el error?
+
+Deja de funcionar solo la entrega de los pedidos a la cocina. El backend sigue guardando y publicando, y el agente de Pub/Sub sigue firmando tokens a nombre de `beyluan-invocador`, pero Cloud Run rechaza cada entrega con 403 antes de que llegue al código de la cocina, como pasó con nuestro `curl` sin token. Se nota cuando el cambio de IAM se propaga, normalmente en uno o dos minutos; desde ahí todas las entregas fallan. Pub/Sub reintenta con esperas de 10 a 60 segundos, y con nuestra política, a los 10 intentos (unos 4 minutos y medio) manda el mensaje a `beyluan-pedidos-muertos`. En el teléfono el cliente recibe su número sin ningún error, porque el backend responde 201, pero el pedido se queda en `recibido` para siempre: la cocina nunca llega a ejecutarse y no lo marca como `preparando`. El error no aparece en los registros de texto de la cocina ni en los del backend, que sigue diciendo que publicó. Se encuentra en el registro de solicitudes `run.googleapis.com/requests` de `beyluan-cocina`, como `POST 403` con agente `APIs-Google`; en las métricas de la suscripción, donde suben los mensajes sin confirmar y la antigüedad del más viejo; y en los mensajes que se acumulan en `beyluan-muertos`.
+
+### Con PROBABILIDAD_FALLO en 0.5, ¿cuántas veces le llega en promedio un mismo pedido a la cocina, con la cocina de la plantilla y con su cocina idempotente?
+
+Con la cocina de la plantilla, en promedio 2 veces. La falla ocurre después de hacer el trabajo, y cada entrega repetida vuelve a hacer todo, incluida la falla con probabilidad 0,5. El número de entregas hasta que una responde 2xx es geométrico, con promedio 1 / (1 - 0,5) = 2, y cada entrega descuenta inventario. Con la cocina idempotente, en promedio 1,5 veces. La primera entrega falla con probabilidad 0,5, pero la segunda encuentra el pedido en `listo` dentro de `marcar_preparando` y responde 204 antes de llegar al punto de la falla, así que nunca hay una tercera: 1 + 0,5 = 1,5. Los dos números son distintos porque en la plantilla la entrega repetida puede volver a fallar, y en la idempotente no. En nuestras pruebas, con la plantilla fueron 6 entregas para 4 pedidos (1,5): con solo 4 pedidos las dos repeticiones acertaron a la primera, y por eso salió por debajo de 2. Aun así, esas 6 entregas descontaron 6 tintos. Con la cocina idempotente fueron 15 entregas para 10 pedidos, exactamente 1,5, y se descontaron solo 10 tintos.

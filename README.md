@@ -192,6 +192,8 @@ El plato misterioso falla siempre, y sin un tema de mensajes muertos Pub/Sub lo 
 | Nombre | Código | Usuario de GitHub |
 |---|---|---|
 | Luisangel Ferizzola Roa | 1152409 | LouisFzz |
+|---|---|---|
+| Beymar Jefrey Villamizar Estevez | 1152426 | Beymarjefreyve |
 
 ## URL de la cafetería
 

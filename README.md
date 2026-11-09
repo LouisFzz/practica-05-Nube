@@ -273,7 +273,7 @@ Las horas de las salidas de `gcloud` están en UTC. La consola de Google Cloud y
 
 ### Fase 0: repositorio, proyecto y configuración
 
-Louis creó el repositorio público `LouisFzz/practica-05-Nube` desde la plantilla y agregó a Beymar y a Angel como colaboradores; en la página Contributors aparecemos los tres con commits. Desplegamos con el proyecto de Beymar, así que todos los comandos de Docker, Cloud Build y Terraform se corrieron en su Cloud Shell. El código lo editamos en VS Code y lo subimos con push; en Cloud Shell solo hicimos `git clone` y `git pull`.
+Luisangel creó el repositorio público `LouisFzz/practica-05-Nube` desde la plantilla y agregó a Beymar y a Angel como colaboradores; en la página Contributors aparecemos los tres con commits. Desplegamos con el proyecto de Beymar, así que todos los comandos de Docker, Cloud Build y Terraform se corrieron en su Cloud Shell. El código lo editamos en VS Code y lo subimos con push; en Cloud Shell solo hicimos `git clone` y `git pull`.
 
 Usamos otra vez el prefijo `beyluan`, el mismo de la práctica 6. Antes de aplicar comprobamos que no quedaban recursos de esa práctica en el proyecto: `gcloud run services list`, `gcloud artifacts repositories list` y `gcloud firestore databases list` respondieron `Listed 0 items`, así que no había nombres que chocaran. Terraform estaba en la versión 1.16.2.
 
